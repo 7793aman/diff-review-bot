@@ -1,0 +1,11 @@
+.env
+.env.*
+*.pem
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+
+# Course materials are reference only — includes instructor secrets
+PROJECT MATERIALS - AI GITHUB PR REVIEWER/
+secret.yaml
