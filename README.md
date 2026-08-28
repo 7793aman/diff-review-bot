@@ -2,60 +2,51 @@
 
 GitHub App that reviews a pull request diff and posts inline comments.
 
-When a developer opens or updates a PR, the bot fetches the changed lines, runs several review passes in parallel (static, security, style, architecture), and writes findings back on the PR. After a merge, it stores frequent issues so later reviews on that repo can take them into account.
+When a developer opens or updates a PR, the bot fetches the changed lines, runs several review passes in parallel, and writes findings back on the PR. After a merge, it stores frequent issues so later reviews on that repo can take them into account.
+
+**On a pull request**
 
 ```mermaid
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 28, "rankSpacing": 48}, "theme": "base", "themeVariables": {"fontFamily": "system-ui, sans-serif", "lineColor": "#8b949e"}}}%%
+flowchart LR
+    classDef gh fill:#21262d,stroke:#6e7681,color:#e6edf3
+    classDef svc fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+    classDef store fill:#0f3d24,stroke:#3fb950,color:#e6edf3
+
+    PR((Pull request)):::gh
+    GW[Gateway]:::svc
+    WH[Webhook]:::svc
+    Q[(Redis)]:::store
+    OR[Orchestrator]:::svc
+    RV[Reviewer]:::svc
+    OUT((Comments)):::gh
+
+    PR -->|webhook| GW --> WH --> Q --> OR --> RV -->|inline + summary| OUT
+```
+
+**Inside the review**
+
+```mermaid
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 20, "rankSpacing": 36}, "theme": "base", "themeVariables": {"fontFamily": "system-ui, sans-serif", "lineColor": "#8b949e"}}}%%
 flowchart TB
-  subgraph GitHub
-    Dev[Developer opens or updates a PR]
-    Event[PR webhook]
-    PR[PR with inline comments]
-  end
+    classDef svc fill:#0d419d,stroke:#58a6ff,color:#e6edf3
+    classDef agent fill:#3b2263,stroke:#d2a8ff,color:#e6edf3
+    classDef store fill:#0f3d24,stroke:#3fb950,color:#e6edf3
 
-  Dev --> Event
-  Event --> URL[Public webhook URL]
-  URL --> ALB[Load balancer]
+    OR[Orchestrator]:::svc
 
-  subgraph Cluster["Runtime"]
-    GW[Gateway — verify the request is from GitHub]
-    WH[Webhook — save the PR, enqueue a job]
-    Q[Queue]
-    Worker[Worker]
-    Orch[Orchestrator — fetch diff, run review passes]
-    Rev[Reviewer — post comments]
-    Learn[Learner — on merge, store frequent issues]
-    GW --> WH --> Q --> Worker --> Orch --> Rev
-    WH --> Learn
-  end
+    OR --> S[Static]:::agent
+    OR --> C[Security]:::agent
+    OR --> Y[Style]:::agent
+    OR --> A[Architecture]:::agent
 
-  ALB --> GW
-  Rev --> PR
-  PR --> Dev
+    S --> M[Merge findings]
+    C --> M
+    Y --> M
+    A --> M
+    M --> RV[Reviewer]:::svc
 
-  subgraph Data
-    PG[(Postgres — PRs, findings, patterns)]
-    Redis[(Redis — job queue)]
-  end
-
-  WH --> PG
-  Orch --> PG
-  Learn --> PG
-  Q --> Redis
-
-  subgraph Ship["Ship"]
-    GHA[GitHub Actions]
-    Img[Container images]
-    GHA --> Img --> Cluster
-  end
-
-  subgraph Watch["Watch"]
-    Prom[Prometheus / Grafana]
-    LF[LLM traces]
-  end
-
-  GW -.-> Prom
-  WH -.-> Prom
-  Orch -.-> Prom
-  Orch -.-> LF
-  Rev -.-> Prom
+    WH[Webhook]:::svc --> PG[(Postgres)]:::store
+    M --> PG
+    WH -->|on merge| LN[Learner]:::svc --> PG
 ```
