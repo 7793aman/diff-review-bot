@@ -2,51 +2,84 @@
 
 GitHub App that reviews a pull request diff and posts inline comments.
 
-When a developer opens or updates a PR, the bot fetches the changed lines, runs several review passes in parallel, and writes findings back on the PR. After a merge, it stores frequent issues so later reviews on that repo can take them into account.
-
-**On a pull request**
+When a developer opens or updates a PR, the bot fetches the changed lines, runs several review passes in parallel (static, security, style, architecture), and writes findings back on the PR. After a merge, it stores frequent issues so later reviews on that repo can take them into account.
 
 ```mermaid
-%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 28, "rankSpacing": 48}, "theme": "base", "themeVariables": {"fontFamily": "system-ui, sans-serif", "lineColor": "#8b949e"}}}%%
-flowchart LR
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 18, "rankSpacing": 28}, "theme": "base", "themeVariables": {"fontFamily": "system-ui, sans-serif", "lineColor": "#8b949e", "clusterBkg": "#161b22", "clusterBorder": "#30363d", "titleColor": "#e6edf3"}}}%%
+flowchart TB
     classDef gh fill:#21262d,stroke:#6e7681,color:#e6edf3
     classDef svc fill:#0d419d,stroke:#58a6ff,color:#e6edf3
     classDef store fill:#0f3d24,stroke:#3fb950,color:#e6edf3
-
-    PR((Pull request)):::gh
-    GW[Gateway]:::svc
-    WH[Webhook]:::svc
-    Q[(Redis)]:::store
-    OR[Orchestrator]:::svc
-    RV[Reviewer]:::svc
-    OUT((Comments)):::gh
-
-    PR -->|webhook| GW --> WH --> Q --> OR --> RV -->|inline + summary| OUT
-```
-
-**Inside the review**
-
-```mermaid
-%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 20, "rankSpacing": 36}, "theme": "base", "themeVariables": {"fontFamily": "system-ui, sans-serif", "lineColor": "#8b949e"}}}%%
-flowchart TB
-    classDef svc fill:#0d419d,stroke:#58a6ff,color:#e6edf3
     classDef agent fill:#3b2263,stroke:#d2a8ff,color:#e6edf3
-    classDef store fill:#0f3d24,stroke:#3fb950,color:#e6edf3
+    classDef infra fill:#3d2f00,stroke:#d4a72c,color:#e6edf3
 
-    OR[Orchestrator]:::svc
+    Dev[Developer opens a PR]:::gh --> Event[GitHub webhook]:::gh
+    Event --> URL[Public webhook URL]:::infra
+    URL --> ALB[Load balancer]:::infra
 
-    OR --> S[Static]:::agent
-    OR --> C[Security]:::agent
-    OR --> Y[Style]:::agent
-    OR --> A[Architecture]:::agent
+    subgraph runtime [Runtime]
+        GW[Gateway — verify HMAC]:::svc
+        WH[Webhook — parse, dedupe, store]:::svc
+        Worker[Celery worker]:::svc
+        OR[Orchestrator — fetch diff]:::svc
+        RV[Reviewer — post comments]:::svc
+        LN[Learner — store patterns]:::svc
 
-    S --> M[Merge findings]
-    C --> M
-    Y --> M
-    A --> M
-    M --> RV[Reviewer]:::svc
+        GW --> WH
+        WH --> Worker --> OR --> RV
+    end
 
-    WH[Webhook]:::svc --> PG[(Postgres)]:::store
+    ALB --> GW
+
+    subgraph review [Review passes]
+        S[Static]:::agent
+        C[Security]:::agent
+        Y[Style]:::agent
+        A[Architecture]:::agent
+        M[Merge and dedupe]
+        S --> M
+        C --> M
+        Y --> M
+        A --> M
+    end
+
+    OR --> S
+    OR --> C
+    OR --> Y
+    OR --> A
+    M --> RV
+
+    subgraph data [Data]
+        PG[(Postgres — PRs, findings, patterns)]:::store
+        Redis[(Redis — job queue)]:::store
+    end
+
+    WH --> PG
+    WH --> Redis
+    Redis --> Worker
     M --> PG
-    WH -->|on merge| LN[Learner]:::svc --> PG
+    LN --> PG
+
+    RV --> PR[PR updated with comments]:::gh
+    PR --> Again[Developer pushes again]:::gh
+    Again --> Event
+
+    PR --> Merged{PR merged?}
+    Merged -->|yes| LN
+    LN --> Smarter[Later reviews see frequent issues]:::agent
+
+    subgraph ship [Ship]
+        GHA[GitHub Actions]:::infra --> Docker[Docker build]:::infra --> ECR[Container registry]:::infra --> runtime
+    end
+
+    subgraph watch [Watch]
+        Prom[Prometheus]:::infra --> Graf[Grafana]:::infra
+        LF[LLM traces]:::infra
+    end
+
+    GW -.-> Prom
+    WH -.-> Prom
+    OR -.-> Prom
+    RV -.-> Prom
+    OR -.-> LF
 ```
